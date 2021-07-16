@@ -16,7 +16,7 @@
 #    GNU General Public License for more details.
 #
 
-import os, urllib2, tempfile, random,  sys,  gzip, datetime, itertools, zlib
+import os, urllib.request, urllib.error, urllib.parse, tempfile, random,  sys,  gzip, datetime, itertools, zlib
 #Decimal() can represent floating point data with higher precission than built-in float
 from decimal import Decimal
 
@@ -41,7 +41,7 @@ try:
 except:
     pass
 try:
-    from cinfony import pybel
+    import pybel
     m['pybel'] = pybel
     backend = 'pybel'
 except ImportError:
@@ -61,7 +61,7 @@ except ImportError:
 if not backend and not m:
     exit('No supported chemoinformatics toolkit found')
 
-import metadata
+# import metadata
 
 _internalformats = ('can', 'smi', 'inchi', 'inchikey')
 intreprs = [format for format in _internalformats if format in m[backend].outformats]
@@ -151,7 +151,7 @@ tanimoto_d = Decimal('0.9')
 MW_t = 25
 RB_t = 1
 mind = 36
-maxd = mind
+maxd = 50 
 
 #Dict of ZINC subsets
 ZINC_subsets = {
@@ -210,10 +210,11 @@ class ComparableMol(object):
 
     def calc_mw(self, mol, b): return mol.molwt
     def calc_title(self, mol, b): return mol.title
+
     def calc_can(self, mol, b):
         try:
             can = mol.write(REP)
-        except Exception, e:
+        except Exception as e:
             _debug(e)
             return None
         if REP in ('smi', 'can') and b == 'pybel':
@@ -302,7 +303,7 @@ def get_zinc_slice(slicename = 'all', subset = '10', cachedir = tempfile.gettemp
     if slicename in ('all', 'single', 'usual', 'metals'):
         script = "http://zinc12.docking.org/db/bysubset/%s/%s.sdf.csh" % (subset,slicename)
         _debug( 'Downloading files in %s' % script)
-        handler = urllib2.urlopen(script)
+        handler = urllib.request.urlopen(script)
         _debug("Reading ZINC data...")
         scriptcontent = handler.read().split('\n')
         handler.close()
@@ -319,7 +320,7 @@ def get_zinc_slice(slicename = 'all', subset = '10', cachedir = tempfile.gettemp
         yield len(filelist)
         random.shuffle(filelist)
         for file in filelist:
-            dbhandler = urllib2.urlopen(parenturl + file)
+            dbhandler = urllib.request.urlopen(parenturl + file)
             outfilename = os.path.join(cachedir, file)
             download_needed = True
             if keepcache:
@@ -346,11 +347,11 @@ def get_zinc_slice(slicename = 'all', subset = '10', cachedir = tempfile.gettemp
             if not keepcache:
                 try:
                     os.remove(outfilename)
-                except Exception,  e:
+                except Exception as  e:
                     _debug("Unable to remove %s" % (outfilename))
-                    _debug(unicode(e))
+                    _debug(str(e))
     else:
-        raise Exception,  u"Unknown slice"
+        raise Exception("Unknown slice")
 
 def get_fileformat(filename):
     """
@@ -391,12 +392,12 @@ def query_db(conn, table='Molecules'):
         try:
             mol = DbMol(row)
             yield mol, rowcount, 'database'
-        except Exception, e:
-            print e
+        except Exception as e:
+            print(e)
     else:
         cursor.close()
 
-def parse_db_files(filelist):
+def _parse_db_files(filelist):
     """
     Parses files where to look for decoys
     """
@@ -411,7 +412,7 @@ def parse_db_files(filelist):
                 try:
                     cmol= ComparableMol(mol, b)
                     yield cmol, filecount, dbfile
-                except Exception, e:
+                except Exception as e:
                     _debug(e)
         filecount += 1
 
@@ -419,19 +420,37 @@ def parse_query_files(filelist):
     """
     Parses files containing active ligands
     """
+    b = 'pybel'
     query_dict = {}
-    for file in filelist:
-        file = str(file)
-        b = get_format_backend(file)
-        mols = m[b].readfile(get_fileformat(file), file)
-        for mol in mols:
+    with open(filelist[0]) as mol_f:
+        for s in mol_f:
+            mol = pybel.readstring('smi', s)
             if mol:
                 try:
                     cmol = ComparableMol(mol, b)
                     query_dict[cmol] = 0
-                except Exception, e:
+                except Exception as e:
                     _debug(e)
     return query_dict
+
+def parse_db_files(filelist):
+    """
+    Parses files containing active ligands
+    """
+    b = 'pybel'
+    query_dict = {}
+    with open(filelist[0]) as mol_f:
+        for s in mol_f:
+            try:
+                mol = pybel.readstring('smi', s.split(",")[1])
+            except:
+                continue
+            if mol:
+                try:
+                    cmol = ComparableMol(mol, b)
+                    yield cmol, 1, filelist[0] 
+                except Exception as e:
+                    _debug(e)
 
 def parse_decoy_files(decoyfilelist):
     """
@@ -447,7 +466,7 @@ def parse_decoy_files(decoyfilelist):
                 try:
                     cmol = ComparableMol(mol, b)
                     decoy_set.add(cmol)
-                except Exception, e:
+                except Exception as e:
                     _debug(e)
     return decoy_set
 
@@ -472,7 +491,7 @@ def isdecoy(
     return False
 
 def get_ndecoys(ligands_dict, maxd):
-    return sum((x for x in ligands_dict.itervalues() if not maxd or maxd >= x))
+    return sum((x for x in ligands_dict.values() if not maxd or maxd >= x))
 
 def checkoutputfile(outputfile):
     """
@@ -546,16 +565,20 @@ def find_decoys(
     _debug("Looking for decoys!")
 
     db_entry_gen = parse_db_files(db_files)
+    print("Parsed DB")
 
     if conn:
+        print("Querrying DB")
         try:
             db_entry_gen = itertools.chain(query_db(conn), db_entry_gen)
-        except Exception, e:
+        except Exception as e:
             _debug(e)
 
     used_db_files = set()
 
+    print("Parsing query")
     ligands_dict = parse_query_files(query_files)
+    print("got query")
 
     nactive_ligands = len(ligands_dict)
 
@@ -577,32 +600,6 @@ def find_decoys(
     outbackend= format_backends[format]
     decoyfile = m[outbackend].Outputfile(format, str(outputfile))
     decoys_fp_set = set()
-
-    if decoy_files:
-        yield ('file', 0, 'known decoy files...')
-        for decoy in parse_decoy_files(decoy_files):
-            ligands_decoy = set()
-            for ligand in ligands_dict:
-                if ligand not in ligands_max:
-                    if isdecoy(decoy,ligand,HBA_t,HBD_t,ClogP_t,MW_t,RB_t ):
-                        ligands_decoy.add(ligand)
-            if not ligands_decoy:
-                continue
-            if decoy.can not in decoys_can_set:
-                decoyfile.write(decoy.__getattribute__('mol_'+outbackend))
-                decoys_can_set.add(decoy.can)
-                decoys_fp_set.add(decoy.fp)
-            for ligand in ligands_decoy:
-                ligands_dict[ligand] +=1
-                if maxd and ligands_dict[ligand] >= maxd:
-                    ligands_max.add(ligand)
-                    continue
-                if mind and ligands_dict[ligand] == mind:
-                    complete_ligand_sets += 1
-                    ndecoys = get_ndecoys(ligands_dict, maxd)
-                    yield ('ndecoys',  ndecoys,  complete_ligand_sets)
-                if unique:
-                    break
 
     yield ('ndecoys', ndecoys,  complete_ligand_sets)
 
@@ -661,7 +658,7 @@ def find_decoys(
                         yield ('ndecoys',  ndecoys, complete_ligand_sets)
                         if unique:
                             break
-            except Exception, e:
+            except Exception as e:
                 _debug(e)
         else:
             _debug("finishing")
@@ -681,7 +678,8 @@ def find_decoys(
     else:
         _debug("Not all wanted decoys found")
     #Generate logfile
-    log = u'"%s %s log file generated on %s"\n' % (metadata.NAME, metadata.VERSION, datetime.datetime.now())
+    # log = '"%s %s log file generated on %s"\n' % (metadata.NAME, metadata.VERSION, datetime.datetime.now())
+    log = ""
     log += "\n"
     log += '"Output file:","%s"\n' % outputfile
     log += "\n"
@@ -709,9 +707,10 @@ def find_decoys(
         log += '"%s","%s","%s","%s","%s","%s","%s"\n' % tuple([str(f) for f in (active.title,  active.hba,  active.hbd,  active.clogp,  active.mw,  active.rot,  ligands_dict[active])])
     log += "\n"
 
-    logfile = open('%s_log.csv' % outputfile,  'wb')
-    logfile.write(log)
-    logfile.close()
+    print(log)
+    # logfile = open('%s_log.csv' % outputfile,  'wb')
+    # logfile.write(log)
+    # logfile.close()
 
     decoyfile.close()
 
@@ -721,3 +720,4 @@ def find_decoys(
     _debug(backenddict)
     #Last, special yield:
     yield ('result',  ligands_dict,  [outputfile, minreached])
+
