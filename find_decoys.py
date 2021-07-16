@@ -16,7 +16,7 @@
 #    GNU General Public License for more details.
 #
 
-import os, urllib.request, urllib.error, urllib.parse, tempfile, random,  sys,  gzip, datetime, itertools, zlib
+import datetime, os, urllib.request, urllib.error, urllib.parse, tempfile, timeit, random,  sys,  gzip, datetime, itertools, zlib
 #Decimal() can represent floating point data with higher precission than built-in float
 from decimal import Decimal
 
@@ -41,7 +41,7 @@ try:
 except:
     pass
 try:
-    import pybel
+    import openbabel.pybel as pybel
     m['pybel'] = pybel
     backend = 'pybel'
 except ImportError:
@@ -150,8 +150,8 @@ tanimoto_t = Decimal('0.75')
 tanimoto_d = Decimal('0.9')
 MW_t = 25
 RB_t = 1
-mind = 36
-maxd = 50 
+mind = 2#36
+maxd = 2#50 
 
 #Dict of ZINC subsets
 ZINC_subsets = {
@@ -296,7 +296,7 @@ class ComFp(object):
         return ", ".join([str(x) for x in self.bits])
 
 
-def get_zinc_slice(slicename = 'all', subset = '10', cachedir = tempfile.gettempdir(),  keepcache = False):
+def get_zinc_slice(slicename = 'all', subset = '10', cachedir = tempfile.gettempdir(), keepcache = False):
     """
     returns an iterable list of files from  online ZINC slices
     """
@@ -305,7 +305,7 @@ def get_zinc_slice(slicename = 'all', subset = '10', cachedir = tempfile.gettemp
         _debug( 'Downloading files in %s' % script)
         handler = urllib.request.urlopen(script)
         _debug("Reading ZINC data...")
-        scriptcontent = handler.read().split('\n')
+        scriptcontent = handler.read().decode('utf-8').split('\n')
         handler.close()
         filelist = []
         parenturl = None
@@ -317,8 +317,10 @@ def get_zinc_slice(slicename = 'all', subset = '10', cachedir = tempfile.gettemp
                         parenturl += '/'
                 elif line.endswith('.sdf.gz'):
                     filelist.append(line)
-        yield len(filelist)
+        _debug("Number of files in ZINC subset: %s" % (len(filelist),)) #yield len(filelist)
+        random.seed(4)
         random.shuffle(filelist)
+        parenturl = parenturl.replace("http://zinc.docking.org", "http://zinc12.docking.org") # ZINC12 has moved: https://zinc12.docking.org/
         for file in filelist:
             dbhandler = urllib.request.urlopen(parenturl + file)
             outfilename = os.path.join(cachedir, file)
@@ -403,6 +405,7 @@ def _parse_db_files(filelist):
     """
     filecount = 0
     if type(filelist) == list:
+        random.seed(4)
         random.shuffle(filelist)
     for dbfile in filelist:
         b = get_format_backend(dbfile)
@@ -435,22 +438,24 @@ def parse_query_files(filelist):
 
 def parse_db_files(filelist):
     """
-    Parses files containing active ligands
+    Parses files where to look for decoys
     """
-    b = 'pybel'
-    query_dict = {}
-    with open(filelist[0]) as mol_f:
-        for s in mol_f:
-            try:
-                mol = pybel.readstring('smi', s.split(",")[1])
-            except:
-                continue
+    filecount = 0
+    if type(filelist) == list:
+        random.seed(4)
+        random.shuffle(filelist)
+
+    for dbfile in filelist:
+        b = get_format_backend(dbfile)
+        mols = m[b].readfile(get_fileformat(dbfile), dbfile)
+        for mol in mols:
             if mol:
                 try:
-                    cmol = ComparableMol(mol, b)
-                    yield cmol, 1, filelist[0] 
+                    cmol= ComparableMol(mol, b)
+                    yield cmol, filecount, dbfile
                 except Exception as e:
                     _debug(e)
+        filecount += 1
 
 def parse_decoy_files(decoyfilelist):
     """
@@ -721,3 +726,16 @@ def find_decoys(
     #Last, special yield:
     yield ('result',  ligands_dict,  [outputfile, minreached])
 
+t1 = timeit.default_timer()
+
+# http://zinc12.docking.org/subsets/clean-drug-like / 13,195,609 compounds / 2013-11-05
+db_files = get_zinc_slice(slicename='usual', subset=ZINC_subsets["clean-drug-like"], cachedir="/hps/nobackup/beltrao/jurgen/decoy_finder_cachedir", keepcache=True)
+#db_files_ = [ str(dbfile) for dbfile in itertools.islice(db_files, 10) ]
+db_files_ = [ str(dbfile) for dbfile in db_files ]
+
+for i, y in enumerate(find_decoys(query_files=['example/lapatinib.smi'], db_files=db_files_, outputfile='example/lapatinib_decoys.sdf')):
+    if (i % 10000 == 0) or (y[0] != "file"):
+        print(i, '\t', y)
+
+t2 = timeit.default_timer()
+print(f"Wall-clock time: {datetime.timedelta(seconds=t2 - t1)}")
