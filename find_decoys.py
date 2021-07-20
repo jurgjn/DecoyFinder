@@ -16,7 +16,7 @@
 #    GNU General Public License for more details.
 #
 
-import datetime, os, urllib.request, urllib.error, urllib.parse, tempfile, timeit, random,  sys,  gzip, datetime, itertools, zlib
+import argparse, datetime, os, urllib.request, urllib.error, urllib.parse, tempfile, timeit, random,  sys,  gzip, datetime, itertools, zlib
 #Decimal() can represent floating point data with higher precission than built-in float
 from decimal import Decimal
 
@@ -150,8 +150,8 @@ tanimoto_t = Decimal('0.75')
 tanimoto_d = Decimal('0.9')
 MW_t = 25
 RB_t = 1
-mind = 2#36
-maxd = 2#50 
+mind = 36
+maxd = 50
 
 #Dict of ZINC subsets
 ZINC_subsets = {
@@ -726,16 +726,28 @@ def find_decoys(
     #Last, special yield:
     yield ('result',  ligands_dict,  [outputfile, minreached])
 
-t1 = timeit.default_timer()
 
-# http://zinc12.docking.org/subsets/clean-drug-like / 13,195,609 compounds / 2013-11-05
-db_files = get_zinc_slice(slicename='usual', subset=ZINC_subsets["clean-drug-like"], cachedir="/hps/nobackup/beltrao/jurgen/decoy_finder_cachedir", keepcache=True)
-#db_files_ = [ str(dbfile) for dbfile in itertools.islice(db_files, 10) ]
-db_files_ = [ str(dbfile) for dbfile in db_files ]
+if __name__ == '__main__':
+    """
+    Usage:
+        ./find_decoys.py --query_file example/lapatinib.smi --outputfile example/lapatinib_decoys_out.sdf --cachedir /hps/nobackup/beltrao/jurgen/decoy_finder_cachedir
+        ./find_decoys.py --query_file example/erlotinib.smi --outputfile example/erlotinib_decoys_out.sdf --cachedir /hps/nobackup/beltrao/jurgen/decoy_finder_cachedir
+    """
+    t1 = timeit.default_timer()
+    parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.ArgumentDefaultsHelpFormatter)
+    parser.add_argument('--query_file')
+    parser.add_argument('--outputfile')
+    parser.add_argument('--cachedir')
+    args = parser.parse_args()
 
-for i, y in enumerate(find_decoys(query_files=['example/lapatinib.smi'], db_files=db_files_, outputfile='example/lapatinib_decoys.sdf')):
-    if (i % 10000 == 0) or (y[0] != "file"):
-        print(i, '\t', y)
+    # http://zinc12.docking.org/subsets/clean-drug-like / 13,195,609 compounds / 2013-11-05
+    db_files = get_zinc_slice(slicename='usual', subset=ZINC_subsets["all-purchasable"], cachedir=args.cachedir, keepcache=True)
+    #db_files_ = [ str(dbfile) for dbfile in itertools.islice(db_files, 10) ]
+    db_files_ = [ str(dbfile) for dbfile in db_files ]
 
-t2 = timeit.default_timer()
-print(f"Wall-clock time: {datetime.timedelta(seconds=t2 - t1)}")
+    for i, y in enumerate(find_decoys(query_files=[ args.query_file ], db_files=db_files_, outputfile=args.outputfile)):
+        if (i % 10000 == 0) or (y[0] != "file"):
+            print(i, '\t', y)
+
+    t2 = timeit.default_timer()
+    print(f"Wall-clock time: {datetime.timedelta(seconds=t2 - t1)}")
