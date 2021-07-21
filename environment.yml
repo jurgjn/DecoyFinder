@@ -1,0 +1,10 @@
+# Setup/remove env:
+# conda env create --name DecoyFinder --file environment.yml
+# conda env remove --name DecoyFinder
+channels:
+- conda-forge
+- defaults
+dependencies:
+- python
+- conda-forge::openbabel
+
